@@ -29,6 +29,7 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 - Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
 - Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
 - Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
+- Use the `holdout` split or set `AUTORESEARCH_EVAL_SPLIT`. The holdout shard is reserved for the human to check that your val_bpb gains generalize.
 
 **The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
 

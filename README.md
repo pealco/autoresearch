@@ -54,11 +54,25 @@ The `program.md` file is essentially a super lightweight "skill".
 One long agent session plateaus: as its history grows, it makes smaller edits and stops trying new directions. [Scaling Discovery Requires Forgetting](https://arxiv.org/abs/2610.20563) reports that periodically discarding every session and all earlier candidates, and restarting from the best commit, beats one long session and beats independent parallel agents at the same budget (on this task, mean val_bpb 0.961 versus 0.980 for both). `forget.sh` does this:
 
 ```bash
-./forget.sh oct24          # 4 rounds, 1 agent, 3 hours per round
-./forget.sh oct24 4 4 180  # 4 rounds, team of 4 agents (needs 4 GPUs)
+./forget.sh oct24           # 4 rounds, 1 agent, 30 experiments per round
+./forget.sh oct24 4 4 30    # 4 rounds, team of 4 agents
+GPUS=0,1,2,3 ./forget.sh oct24 4 4 30  # same, one GPU per agent (this repo's train.py)
 ```
 
-Each agent gets a fresh worktree under `worktrees/<tag>/` and a fresh session. Agents in the same round can read each other's commits and `results.tsv`. After each round, the lowest val_bpb across all agents becomes the start of the next round. Set `AGENT_CMD` to use an agent CLI other than `claude -p --dangerously-skip-permissions`.
+Each agent gets a fresh worktree under `worktrees/<tag>/` and a fresh session. Agents in the same round can read each other's commits and `results.tsv`. After each round, the best score across all agents becomes the start of the next round. Each round stops after 12 hours (`ROUND_HOURS`) even if an agent keeps going. Set `AGENT_CMD` to use an agent CLI other than `claude -p --dangerously-skip-permissions`.
+
+Every keep/discard decision uses the same validation data, so part of a gain can be fit to that data and not generalize. At the end, `forget.sh` reruns the start commit and the best commit with `AUTORESEARCH_EVAL_SPLIT=holdout` and prints both scores next to their validation scores. If the holdout gain is much smaller than the validation gain, the search overfit. In this repo the holdout data is `shard_06541`; if you prepared data before it existed, run `uv run prepare.py` again.
+
+### Other tasks (no GPU needed)
+
+`forget.sh` does not depend on this repo's task. It works for any experiment you can run from a command and score with one number: an MCMC fit scored by held-out log predictive density, an XGBoost model scored by validation AUC, or a pipeline that calls an external model API. To use it in another repository:
+
+1. Copy `forget.sh` into the repository.
+2. Write a `program.md` that describes the task, the files the agent may change, and the experiment loop. Keep the "Rounds" section and the `results.tsv` columns from this repo's `program.md`. Column 2 must be your metric.
+3. Make your evaluation command print `<metric>: <value>`. When `AUTORESEARCH_EVAL_SPLIT=holdout` is set, make it score on holdout data instead of validation data.
+4. Run it, for example: `EVAL_CMD="uv run fit.py" METRIC=val_auc MAXIMIZE=1 ./forget.sh oct24 4 2 30`.
+
+On a CPU-only machine, agents in the same round share the CPU cores. If each experiment uses all cores (for example, 4 MCMC chains on 4 cores), run fewer agents or limit each experiment's cores, or the experiments slow each other down.
 
 ## Project structure
 

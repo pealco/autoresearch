@@ -2,15 +2,38 @@
 # Run autoresearch in rounds with forgetting (arXiv:2610.20563, "Scaling Discovery Requires Forgetting").
 # Each round starts every agent in a fresh session and a fresh worktree from the best commit so far.
 # Sessions, branches and results.tsv files from earlier rounds are never shown to later rounds.
-# Usage: ./forget.sh <tag> [rounds=4] [agents=1] [minutes_per_round=180]
-# Agent i uses GPU i-1, so agents must not exceed the number of GPUs.
+# Usage: ./forget.sh <tag> [rounds=4] [agents=1] [experiments_per_round=30]
+# program.md defines the task. Nothing here needs a GPU. Optional environment variables:
+#   EVAL_CMD     runs one experiment and prints "<METRIC>: <value>" (default: uv run train.py)
+#   METRIC       metric name, also column 2 of results.tsv (default: val_bpb)
+#   MAXIMIZE=1   higher is better (default: lower is better)
+#   GPUS=0,1     pin agent i to the i-th listed GPU, wrapping around (default: no pinning)
+#   ROUND_HOURS  wall-clock cap per round, whole hours (default: 12)
+#   AGENT_CMD    agent CLI (default: claude -p --dangerously-skip-permissions)
 set -euo pipefail
-tag=${1:?usage: ./forget.sh <tag> [rounds] [agents] [minutes_per_round]}
-rounds=${2:-4} agents=${3:-1} minutes=${4:-180}
+tag=${1:?usage: ./forget.sh <tag> [rounds] [agents] [experiments_per_round]}
+rounds=${2:-4} agents=${3:-1} experiments=${4:-30}
 read -ra agent_cmd <<< "${AGENT_CMD:-claude -p --dangerously-skip-permissions}"
+eval_cmd=${EVAL_CMD:-uv run train.py} metric=${METRIC:-val_bpb}
+order=-g
+[[ ${MAXIMIZE:-} == 1 ]] && order=-gr
+IFS=, read -ra gpus <<< "${GPUS:-}"
+cap=$((${ROUND_HOURS:-12} * 3600))
 root=$(git rev-parse --show-toplevel)
 export UV_PROJECT_ENVIRONMENT="$root/.venv" # share one venv across worktrees
-best=$(git rev-parse --short=7 HEAD)
+best=$(git rev-parse --short=7 HEAD) best_score=""
+start=$best
+
+pin() { # pin this process to GPU slot $1 if GPUS is set
+  if ((${#gpus[@]})); then export CUDA_VISIBLE_DEVICES=${gpus[$1 % ${#gpus[@]}]}; fi
+}
+
+holdout() { # rerun commit $1 with AUTORESEARCH_EVAL_SPLIT=holdout and print its metric
+  local wt="$root/worktrees/$tag/holdout-$1"
+  git worktree add -q --detach "$wt" "$1"
+  (cd "$wt" && pin 0 && AUTORESEARCH_EVAL_SPLIT=holdout bash -c "$eval_cmd" > "$wt.log" 2>&1) || true
+  awk -v m="$metric:" '$1 == m { print $2 }' "$wt.log"
+}
 
 for ((r = 1; r <= rounds; r++)); do
   dir="$root/worktrees/$tag/r$r"
@@ -24,15 +47,24 @@ for ((r = 1; r <= rounds; r++)); do
     done
     prompt="Read program.md and run the experiment loop in round mode (see the 'Rounds' section).
 Round $r of $rounds. You are on branch autoresearch/$tag-r$r-a$a, starting from commit $best. Setup is done: do not create a branch.
-Stop after about $((minutes / 6)) experiments.${peers:+
+Stop after about $experiments experiments.${peers:+
 Peers working in parallel this round:
 $peers}"
-    (cd "$dir/a$a" && CUDA_VISIBLE_DEVICES=$((a - 1)) timeout "${minutes}m" "${agent_cmd[@]}" "$prompt" > "$dir/a$a.log" 2>&1) &
+    # perl alarm is a portable timeout: macOS has no timeout(1).
+    (cd "$dir/a$a" && pin $((a - 1)) && perl -e 'alarm shift; exec @ARGV' "$cap" "${agent_cmd[@]}" "$prompt") > "$dir/a$a.log" 2>&1 &
   done
   wait
-  # ponytail: picks the single lowest val_bpb, so a lucky noisy run can win; rerun the top few if that bites.
-  new=$(awk -F'\t' '$4 == "keep" && $2 > 0 { print $2 "\t" $1 }' "$dir"/a*/results.tsv 2> /dev/null | sort -g | head -1 | cut -f2 || true)
-  best=${new:-$best}
-  echo "round $r/$rounds: best commit $best"
+  # ponytail: picks the single best score, so a lucky noisy run can win; rerun the top few if that bites.
+  new=$(awk -F'\t' '$4 == "keep" { print $2 "\t" $1 }' "$dir"/a*/results.tsv 2> /dev/null | sort "$order" | head -1 || true)
+  [[ -n $new ]] && best=${new#*$'\t'} best_score=${new%$'\t'*}
+  echo "round $r/$rounds: best commit $best ($metric $best_score)"
 done
 echo "done: best commit $best (git checkout $best)"
+
+# Selection used the same validation data many times, so part of the gain can be fit to it.
+# Rerun the start and best commits once each on holdout data that no decision has seen.
+[[ $best == "$start" ]] && exit 0
+start_score=$(awk -F'\t' -v c="$start" '$1 == c { print $2 }' "$root/worktrees/$tag/r1"/a*/results.tsv 2> /dev/null | sort "$order" | head -1 || true)
+echo "holdout check: rerunning $start and $best with AUTORESEARCH_EVAL_SPLIT=holdout"
+echo "validation: $start ${start_score:-?} -> $best $best_score"
+echo "holdout:    $start $(holdout "$start") -> $best $(holdout "$best")"
