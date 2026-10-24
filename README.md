@@ -61,6 +61,11 @@ GPUS=0,1,2,3 ./forget.sh oct24 4 4 30  # same, one GPU per agent (this repo's tr
 
 Each agent gets a fresh worktree under `worktrees/<tag>/` and a fresh session. Agents in the same round can read each other's commits and `results.tsv`. After each round, the best score across all agents becomes the start of the next round. Each round stops after 12 hours (`ROUND_HOURS`) even if an agent keeps going. Set `AGENT_CMD` to use an agent CLI other than `claude -p --dangerously-skip-permissions`.
 
+Two checks run at the end of each round before a winner is chosen:
+
+1. **Protected files.** A candidate that changes any path in `PROTECT` (default: `prepare.py`) cannot win. Agents in score-driven loops have been seen to improve the score by changing the evaluation, the data split or the seeds. List those paths in `PROTECT` so the harness enforces it, not only the prompt.
+2. **Re-scoring.** The best single score of many noisy runs is often a lucky run. `forget.sh` reruns the top `RESCORE` candidates (default: 3) once each and picks the best mean of the two scores. For a deterministic task, set `RESCORE=0` to skip the extra runs.
+
 Every keep/discard decision uses the same validation data, so part of a gain can be fit to that data and not generalize. At the end, `forget.sh` reruns the start commit and the best commit with `AUTORESEARCH_EVAL_SPLIT=holdout` and prints both scores next to their validation scores. If the holdout gain is much smaller than the validation gain, the search overfit. In this repo the holdout data is `shard_06541`; if you prepared data before it existed, run `uv run prepare.py` again.
 
 ### Other tasks (no GPU needed)
@@ -70,7 +75,7 @@ Every keep/discard decision uses the same validation data, so part of a gain can
 1. Copy `forget.sh` into the repository.
 2. Write a `program.md` that describes the task, the files the agent may change, and the experiment loop. Keep the "Rounds" section and the `results.tsv` columns from this repo's `program.md`. Column 2 must be your metric.
 3. Make your evaluation command print `<metric>: <value>`. When `AUTORESEARCH_EVAL_SPLIT=holdout` is set, make it score on holdout data instead of validation data.
-4. Run it, for example: `EVAL_CMD="uv run fit.py" METRIC=val_auc MAXIMIZE=1 ./forget.sh oct24 4 2 30`.
+4. Run it, for example: `EVAL_CMD="uv run fit.py" METRIC=val_auc MAXIMIZE=1 PROTECT="evaluate.py data/" ./forget.sh oct24 4 2 30`.
 
 On a CPU-only machine, agents in the same round share the CPU cores. If each experiment uses all cores (for example, 4 MCMC chains on 4 cores), run fewer agents or limit each experiment's cores, or the experiments slow each other down.
 
