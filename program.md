@@ -111,4 +111,15 @@ The idea is that you are a completely autonomous researcher trying things out. I
 
 **NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
 
-As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+Long sessions drift toward small, timid edits and early "I've hit the limit" conclusions. Those conclusions are almost always wrong: a fresh agent starting from the same commit usually finds more. Keep proposing real experiments, including large ones.
+
+As an example use case, a user might leave you running while they sleep.
+
+## Rounds
+
+`forget.sh` runs this loop in rounds (see arXiv:2610.20563). Each round, every agent starts with an empty context in its own worktree, from the best commit of all earlier rounds. If your prompt says you are in round mode:
+
+- Skip setup steps 1, 2 and 6. Your branch already exists and is checked out. Do steps 3 to 5.
+- Your first run is the baseline of the starting commit, as usual.
+- Stop after the number of experiments in your prompt, instead of running forever. The harness then starts a fresh round from the best result.
+- If the prompt lists peers, they are other agents working in parallel this round. Before each experiment, you may read their `results.tsv` and inspect their commits with `git log <branch>` and `git diff HEAD <commit>`. Borrow ideas that worked for them, but keep exploring your own direction: do not copy a peer's whole branch. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!

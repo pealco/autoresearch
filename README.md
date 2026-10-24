@@ -49,6 +49,17 @@ Hi have a look at program.md and let's kick off a new experiment! let's do the s
 
 The `program.md` file is essentially a super lightweight "skill".
 
+### Rounds with forgetting
+
+One long agent session plateaus: as its history grows, it makes smaller edits and stops trying new directions. [Scaling Discovery Requires Forgetting](https://arxiv.org/abs/2610.20563) reports that periodically discarding every session and all earlier candidates, and restarting from the best commit, beats one long session and beats independent parallel agents at the same budget (on this task, mean val_bpb 0.961 versus 0.980 for both). `forget.sh` does this:
+
+```bash
+./forget.sh oct24          # 4 rounds, 1 agent, 3 hours per round
+./forget.sh oct24 4 4 180  # 4 rounds, team of 4 agents (needs 4 GPUs)
+```
+
+Each agent gets a fresh worktree under `worktrees/<tag>/` and a fresh session. Agents in the same round can read each other's commits and `results.tsv`. After each round, the lowest val_bpb across all agents becomes the start of the next round. Set `AGENT_CMD` to use an agent CLI other than `claude -p --dangerously-skip-permissions`.
+
 ## Project structure
 
 ```
