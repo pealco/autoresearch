@@ -6,6 +6,18 @@
 
 The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
 
+## Use it for your own research project
+
+This fork generalizes the loop to any project where one command runs an experiment and prints one number: a Bayesian hierarchical model fit with MCMC, an XGBoost model, an embedding or external-model pipeline. It does not need a GPU. Open an agent (Claude Code, Codex or similar) in your project's repository and say:
+
+```
+Read https://github.com/pealco/autoresearch/blob/master/AGENTS.md and set up autoresearch for this project.
+```
+
+The agent asks you for the metric, the files it may change and the files it must not change. It then writes an evaluation script, `program.md` and `autoresearch.env`, checks that they work, and gives you the command to start. [AGENTS.md](AGENTS.md) has the full procedure and the `forget.sh` settings.
+
+The rest of this README describes the original example task: training a small language model on one NVIDIA GPU.
+
 ## How it works
 
 The repo is deliberately kept small and only really has three files that matter:
@@ -68,23 +80,20 @@ Two checks run at the end of each round before a winner is chosen:
 
 Every keep/discard decision uses the same validation data, so part of a gain can be fit to that data and not generalize. At the end, `forget.sh` reruns the start commit and the best commit with `AUTORESEARCH_EVAL_SPLIT=holdout` and prints both scores next to their validation scores. If the holdout gain is much smaller than the validation gain, the search overfit. In this repo the holdout data is `shard_06541`; if you prepared data before it existed, run `uv run prepare.py` again.
 
-### Other tasks (no GPU needed)
+`forget.sh` does not depend on this repo's task. For other projects, see [Use it for your own research project](#use-it-for-your-own-research-project).
 
-`forget.sh` does not depend on this repo's task. It works for any experiment you can run from a command and score with one number: an MCMC fit scored by held-out log predictive density, an XGBoost model scored by validation AUC, or a pipeline that calls an external model API. To use it in another repository:
-
-1. Copy `forget.sh` into the repository.
-2. Write a `program.md` that describes the task, the files the agent may change, and the experiment loop. Keep the "Rounds" section and the `results.tsv` columns from this repo's `program.md`. Column 2 must be your metric.
-3. Make your evaluation command print `<metric>: <value>`. When `AUTORESEARCH_EVAL_SPLIT=holdout` is set, make it score on holdout data instead of validation data.
-4. Run it, for example: `EVAL_CMD="uv run fit.py" METRIC=val_auc MAXIMIZE=1 PROTECT="evaluate.py data/" ./forget.sh oct24 4 2 30`.
-
-On a CPU-only machine, agents in the same round share the CPU cores. If each experiment uses all cores (for example, 4 MCMC chains on 4 cores), run fewer agents or limit each experiment's cores, or the experiments slow each other down.
+`forget.sh` starts agents with `claude -p --dangerously-skip-permissions` by default, which skips all permission prompts. Run it in an isolated machine or container.
 
 ## Project structure
 
 ```
 prepare.py      — constants, data prep + runtime utilities (do not modify)
 train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
+program.md      — agent instructions for the example task
+forget.sh       — runs the loop in rounds with fresh agent sessions (any task)
+AGENTS.md       — agent guide: which file to follow, how to set up a new project
+CLAUDE.md       — imports AGENTS.md for Claude Code
+program.template.md — program.md template for a new project
 pyproject.toml  — dependencies
 ```
 

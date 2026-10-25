@@ -12,7 +12,15 @@
 #   GPUS=0,1     pin agent i to the i-th listed GPU, wrapping around (default: no pinning)
 #   ROUND_HOURS  wall-clock cap per round, whole hours (default: 12)
 #   AGENT_CMD    agent CLI (default: claude -p --dangerously-skip-permissions)
+#   Put project settings in autoresearch.env at the repo root as KEY=value lines, no quotes.
+#   Variables already set in the environment take precedence over the file.
 set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+if [[ -f $root/autoresearch.env ]]; then
+  while IFS='=' read -r k v; do
+    if [[ $k =~ ^[A-Z_]+$ && -z ${!k+x} ]]; then export "$k=$v"; fi
+  done < "$root/autoresearch.env"
+fi
 tag=${1:?usage: ./forget.sh <tag> [rounds] [agents] [experiments_per_round]}
 rounds=${2:-4} agents=${3:-1} experiments=${4:-30}
 read -ra agent_cmd <<< "${AGENT_CMD:-claude -p --dangerously-skip-permissions}"
@@ -25,7 +33,6 @@ rescore=${RESCORE:-3}
 ((rescore > 0)) || rescore=1
 IFS=, read -ra gpus <<< "${GPUS:-}"
 cap=$((${ROUND_HOURS:-12} * 3600))
-root=$(git rev-parse --show-toplevel)
 export UV_PROJECT_ENVIRONMENT="$root/.venv" # share one venv across worktrees
 best=$(git rev-parse --short=7 HEAD) best_score=""
 start=$best
@@ -37,8 +44,9 @@ pin() { # pin this process to GPU slot $1 if GPUS is set
 score() { # run commit $1 once in a fresh worktree named $2 with AUTORESEARCH_EVAL_SPLIT=$3; print its metric
   local wt="$root/worktrees/$tag/$2-$1"
   git worktree add -q --detach "$wt" "$1"
-  (cd "$wt" && pin 0 && AUTORESEARCH_EVAL_SPLIT=$3 bash -c "$eval_cmd" < /dev/null > "$wt.log" 2>&1) || true
-  awk -v m="$metric:" '$1 == m { print $2 }' "$wt.log"
+  if (cd "$wt" && pin 0 && AUTORESEARCH_EVAL_SPLIT=$3 bash -c "$eval_cmd" < /dev/null > "$wt.log" 2>&1); then
+    awk -v m="$metric:" '$1 == m { print $2 }' "$wt.log"
+  fi
 }
 
 for ((r = 1; r <= rounds; r++)); do
